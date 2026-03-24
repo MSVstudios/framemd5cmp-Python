@@ -8,7 +8,6 @@ compare video files frame-by-frame using `framemd5` output hashes and report dif
 - `framemd5cmp.py`: compare two video files by generating frame MD5 (framemd5) for each, extracting hash-only file and diffing.
 - `makeframemd5.py`: generate framemd5 files from a single source with options (decode, copy codec, or filtered fingerprint).
 - `tests/*`: pytest tests for behavior and dependency checks.
-- `AGENT.md`: agent guidance for porting behavior.
 
 ## Requirements
 
