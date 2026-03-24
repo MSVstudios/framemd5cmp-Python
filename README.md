@@ -9,6 +9,33 @@ compare video files frame-by-frame using `framemd5` output hashes and report dif
 - `makeframemd5.py`: generate framemd5 files from a single source with options (decode, copy codec, or filtered fingerprint).
 - `tests/*`: pytest tests for behavior and dependency checks.
 
+## Behavior overview
+
+### framemd5cmp.py
+
+- Purpose: verify frame-level equality (decoded pixel hash) between two inputs.
+- Steps:
+  1. verify `ffmpeg`/`ffprobe` availability via `shutil.which`.
+  2. validate input files exist, are non-empty, and are different paths.
+  3. confirm video streams with `ffprobe -show_streams -select_streams v`.
+  4. create `<base>_framemd5.txt` with `ffmpeg -f framemd5`.
+  5. extract hash values into `<base>_hashonly.txt`.
+  6. diff hash files via `difflib.unified_diff` into `<base1>_vs_<base2>_diff.txt`.
+  7. exit status indicates no difference (`0`), differences (`1`), or error codes.
+
+### makeframemd5.py
+
+- Purpose: create reliable measurable frame hash outputs for a single input, optionally with transformations.
+- Modes:
+  - `-d`: decoded framemd5 (default for `makeframemd5` behavior).
+  - `-c`: codec copy + framemd5 (packet-level copy path).
+  - `-f`: filtered, normalized fingerprint (monochrome+scale) for robust comparison.
+- `--force`: overwrite existing outputs.
+- path decisions:
+  - file input → output at `<input_dir>/framemd5/`.
+  - directory input → output at `<input_dir>/metadata/submissionDocumentation/framemd5/`.
+- handles FFREPORT path to avoid `file=D` bug on Windows.
+
 ## Requirements
 
 - Python 3.10+ (for `Path` and typing syntax).
