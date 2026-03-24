@@ -1,43 +1,168 @@
-Description: framemd5cmp shell script
-========================
+# framemd5cmp-Python
 
-This script will evaluate two video files and identify discrepancies between their frames. It will only show where frames between the two files do not decode to exactly equal data. It is given the checksum of the decoded frame, not the stored data of the frame [this aspect will be updated in future instances of the script]
+Porting of the original `framemd5cmp` (https://github.com/bavc/framemd5cmp) Bash tool to Python. The purpose is the same:
+compare video files frame-by-frame using `framemd5` output hashes and report differences.
 
-Dependencies/ required applications installed: ffmpeg diff
+## Project structure
 
-The script should be run as follows, from the folder where the script lives: sh framemd5cmp /Firstfile2compare /Secondfile2compare
+- `framemd5cmp.py`: compare two video files by generating frame MD5 (framemd5) for each, extracting hash-only file and diffing.
+- `makeframemd5.py`: generate framemd5 files from a single source with options (decode, copy codec, or filtered fingerprint).
+- `tests/*`: pytest tests for behavior and dependency checks.
+- `AGENT.md`: agent guidance for porting behavior.
 
-Press enter.
+## Requirements
 
-A few text files will result.
+- Python 3.10+ (for `Path` and typing syntax).
+- `ffmpeg` available in `PATH`.
+- `ffprobe` available in `PATH`.
 
-Resulting text files
--------------------------
+## framemd5cmp.py usage
 
-Firstfile2compare001_objects_hashonly.txt 
+```bash
+python -m framemd5cmp <file1> <file2>
+```
 
-Firstfile2compare001_objects_vs_Secondfile2compare002objectsdiff.txt 
+Behavior:
 
-Secondfile2compare002objectsframemd5.txt 
+1. checks `ffmpeg`/`ffprobe` with `shutil.which`.
+2. validates both inputs exist and have non-zero size.
+3. rejects identical paths.
+4. validates each is a video stream with `ffprobe -show_streams -select_streams v`.
+5. generates `*.framemd5` files:
+   - `<basename>_framemd5.txt`
+6. extracts hash column to `<basename>_hashonly.txt`.
+7. diff via `difflib.unified_diff` into `<base1>_vs_<base2>_diff.txt`.
 
-Secondfile2compare002objects_hashonly.txt
+Exit codes:
 
-Description of resulting text files
---------------------------
+- `0` - no differences.
+- `1` - differences found.
+- `2` - input validation error.
+- `3` - video validation failure, also others depending on ffmpeg exit code.
 
-Firstfile2compare001objectshashonly.txt This file lists an MD5 hash for each individual frame for the file first listed to compare in the command. An 001 extension is added to distinguish if two file names are the same (common).
+### Key options
+No extra CLI options beyond the two positional files.
 
-Firstfile2compare001objectsvsSecondfile2compare002objects_diff.txt This report compares the hashes of the two files.
+## makeframemd5.py usage
 
-Secondfile2compare002objectsframemd5.txt This report lists the frame number and associated hash.
+```bash
+python -m makeframemd5 -i <input-file> [-d] [-c] [-f] [--force] [--version]
+```
 
-Secondfile2compare002objectshashonly.txt This report lists the hash only.
+Options:
 
-Most important symbol to look out for is the “-” symbol before checksum hash. This indicates a frame that is brand new - e.g. altered in some way, not just taken away (for example, in the case of a black frame cut out from the beginning of a transfer).
+- `-i`, `--input`: required; file path (or directory) to process.
+- `-d`: decode video frames before checksum; output `<base>_framemd5.md5`.
+- `-c`: copy codec stream (no re-encode) to framemd5; output `<base>_codec_copy_framemd5.md5`.
+- `-f`: experimental filter (monochrome & scale) to framemd5; output `<base>_monow_sqcif_framemd5.md5`.
+- `--force`: overwrite existing output files.
+- `--version`: print version and exit.
 
-Three lines - where there are @@ - these indicate changes 
+Output path policy:
 
-DHC0038_objects_vs_DHC0038_save_as_test_diff.txt
---- means the frame is in original and not in the copy (second in the command line).
-+++ indicates an original frame (if original is the first in the command line).
+- if input is a file: output directory is `<input_dir>/framemd5`.
+- if input is a directory: output directory is `<input_dir>/metadata/submissionDocumentation/framemd5`.
+
+Logging policy (FFREPORT):
+
+- FFREPORT is set to a per-input log file under `logs/` within output directory.
+- escaping for Windows path drive letter MUST be handled when using `FFREPORT` to avoid ffmpeg interpreting `file=D`.
+  - e.g.: `ffmpeg_env['FFREPORT'] = f"file={(log_dir / log_name).as_posix().replace(':', '\\:')}"`.
+- alternative safe approach: do not rely on FFREPORT; capture stdout/stderr in Python and write log file manually.
+
+### Problem note
+
+The legacy issue in this repo observed a weird `D` file creation.
+<br>Cause:
+FFREPORT with Windows absolute path produced `file=D:\...`, ffmpeg parsed as `file=D` and created file `D` in current folder.
+
+### Robust fix
+
+- use `cwd=log_dir` in `subprocess.run` and set `FFREPORT` to filename only, e.g. `file=framemd5.log`.
+- or omit FFREPORT entirely and do:
+
+```python
+r = subprocess.run(cmd, capture_output=True, text=True)
+(log_dir / 'ffmpeg.log').write_text(r.stdout + '\n' + r.stderr)
+```
+
+## Automatic tests (pytest)
+
+`tests/test_makeframemd5.py` verifies:
+
+- default behavior generates one request
+- flags generate expected output names
+- `--force` deletes existing file and proceeds
+
+`tests/test_framemd5cmp.py` verifies:
+
+- dependency check on `ffmpeg`/`ffprobe`
+- `is_video_file` semantics for success/failure paths using mocked `subprocess.run`
+
+## Example workflow
+
+1. Generate framemd5 from two files (anonymized names):
+
+```bash
+python -m makeframemd5 -i "data/sample_video_copy.mp4" --force
+python -m makeframemd5 -i "data/sample_video.mp4" --force
+```
+
+2. Compare:
+
+```bash
+python -m framemd5cmp "data/sample_video_copy.mp4" "data/sample_video.mp4"
+```
+
+3. Inspect outputs:
+
+- `data/framemd5/sample_video_copy_framemd5.md5`
+- `data/framemd5/sample_video_copy_hashonly.txt`
+- `data/framemd5/sample_video_copy_vs_sample_video_diff.txt`
+
+## Notes
+
+- It's critical to quote paths with spaces in PowerShell and cmd.
+- Keep ffmpeg and ffprobe in PATH (local environment install, e.g. choco/brew).
+- For large files, execution can be slow due to per-frame hashing and no incremental caches.
+
+## Contribution
+
+Pull requests accepted for:
+
+- better CLI args parser (argparse enhancements)
+- support for output directory override
+- multithreaded plan for huge batch run
+- custom diff threshold (perceptual difference vs exact frame equality)
+
+---
+
+Maintainer: [MSV studios]
+
+## License
+
+MIT License
+
+Copyright (c) 2026
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
 
